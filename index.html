@@ -2138,581 +2138,154 @@
 
 
 <script>
-// ═══════════════════════════════════════════════════════════════════════════════
-// 防御性基础设施 - 统一模块 (合并自 17 个重复模块)
-// 版本: 2.0.0 (Consolidated)
-// ═══════════════════════════════════════════════════════════════════════════════
+'use strict';
+window.TU = window.TU || {};
+const TU = window.TU;
 
-(function(global) {
-    'use strict';
+// --- Error tracking ---
+window.__TU_ERROR_COUNT__ = 0;
+window.__TU_MAX_ERRORS__ = 100;
+window.__TU_FATAL_ERROR__ = false;
 
-    // =============================================================================
-    // 1. 常量定义
-    // =============================================================================
+window.onerror = function(msg, url, line, col, error) {
+    window.__TU_ERROR_COUNT__++;
+    console.error('[Error #' + window.__TU_ERROR_COUNT__ + ']', { msg, url, line, col, error });
+    if (window.__TU_ERROR_COUNT__ > window.__TU_MAX_ERRORS__) {
+        window.__TU_FATAL_ERROR__ = true;
+        console.error('[CRITICAL] Error count exceeded threshold');
+        if (window.game && typeof window.game.pause === 'function') window.game.pause();
+    }
+    return false;
+};
 
-    const WorkerState = Object.freeze({
-        IDLE: 'idle',
-        INITIALIZING: 'initializing',
-        READY: 'ready',
-        GENERATING: 'generating',
-        RENDERING: 'rendering',
-        ERROR: 'error',
-        TERMINATED: 'terminated'
-    });
+window.addEventListener('unhandledrejection', function(event) {
+    window.__TU_ERROR_COUNT__++;
+    console.error('[Unhandled Rejection]', event.reason);
+    event.preventDefault();
+});
 
-    const ErrorSeverity = Object.freeze({
-        DEBUG: 'debug', INFO: 'info', WARN: 'warn', ERROR: 'error', FATAL: 'fatal'
-    });
+// --- Lean Math & Access Helpers ---
+const SafeMath = {
+    clamp(val, min, max) { return (typeof val !== 'number' || !isFinite(val)) ? min : (val < min ? min : val > max ? max : val); },
+    clampInt(val, min, max) { return !Number.isInteger(val) ? min : (val < min ? min : val > max ? max : val); },
+    toInt32(val) { const n = Number(val); return Number.isFinite(n) ? n | 0 : 0; }
+};
 
-    const EventTypes = Object.freeze({
-        TILE_CHANGED: 'tile:changed',
-        LIGHT_UPDATED: 'light:updated',
-        PLAYER_MOVED: 'player:moved',
-        WEATHER_CHANGED: 'weather:changed',
-        WORLD_LOADED: 'world:loaded',
-        WORKER_ERROR: 'worker:error',
-        RENDER_FRAME: 'render:frame'
-    });
+const WorldAccess = {
+    getTile(world, x, y, def = 0) {
+        if (!world || !world.tiles) return def;
+        x = x | 0; y = y | 0;
+        if (x < 0 || x >= world.w || y < 0 || y >= world.h) return def;
+        const col = world.tiles[x];
+        return col ? (col[y] !== undefined ? col[y] : def) : def;
+    },
+    setTile(world, x, y, value) {
+        if (!world || !world.tiles) return false;
+        x = x | 0; y = y | 0;
+        if (x < 0 || x >= world.w || y < 0 || y >= world.h) return false;
+        const col = world.tiles[x]; if (!col) return false;
+        col[y] = value; return true;
+    },
+    getLight(world, x, y, def = 0) {
+        if (!world || !world.light) return def;
+        x = x | 0; y = y | 0;
+        if (x < 0 || x >= world.w || y < 0 || y >= world.h) return def;
+        const col = world.light[x];
+        return col ? (col[y] !== undefined ? col[y] : def) : def;
+    },
+    setLight(world, x, y, value) {
+        if (!world || !world.light) return false;
+        x = x | 0; y = y | 0;
+        if (x < 0 || x >= world.w || y < 0 || y >= world.h) return false;
+        const col = world.light[x]; if (!col) return false;
+        col[y] = value; return true;
+    }
+};
 
-    // =============================================================================
-    // 2. 全局错误计数与熔断
-    // =============================================================================
+const SafeJSON = {
+    parse(str, def = null) { try { return JSON.parse(str); } catch { return def; } },
+    stringify(obj, def = '{}') { try { return JSON.stringify(obj); } catch { return def; } }
+};
 
-    global.__TU_ERROR_COUNT__ = 0;
-    global.__TU_MAX_ERRORS__ = 100;
-    global.__TU_FATAL_ERROR__ = false;
+// Global convenience (backward compat)
+window.safeGet = (arr, idx, def) => (!arr || idx < 0 || idx >= arr.length) ? def : arr[idx];
+window.safeGetProp = (obj, prop, def) => (obj && typeof obj === 'object') ? (obj[prop] !== undefined ? obj[prop] : def) : def;
+window.safeJSONParse = SafeJSON.parse;
+window.safeJSONStringify = SafeJSON.stringify;
+window.clamp = (v, min, max) => Math.max(min, Math.min(max, v));
+window.lerp = (a, b, t) => a + (b - a) * t;
+window.worldGetTile = WorldAccess.getTile;
+window.worldSetTile = WorldAccess.setTile;
+window.worldGetLight = WorldAccess.getLight;
+window.worldSetLight = WorldAccess.setLight;
 
-    global.onerror = function(msg, url, line, col, error) {
-        global.__TU_ERROR_COUNT__++;
-        console.error(`[Global Error #${global.__TU_ERROR_COUNT__}]`, { msg, url, line, col, error });
-        if (global.__TU_ERROR_COUNT__ > global.__TU_MAX_ERRORS__) {
-            global.__TU_FATAL_ERROR__ = true;
-            console.error('[CRITICAL] 错误数量超过阈值，系统进入安全模式');
-            if (global.game && typeof global.game.pause === 'function') {
-                global.game.pause();
-            }
-        }
-        return false;
-    };
+window.TU_SAFE = { reportError(err, ctx) { console.error('[TU Error]', err, ctx); } };
+window.TU_DEFENSIVE = { SafeMath, WorldAccess, SafeJSON };
+window.TU_Defensive = window.TU_DEFENSIVE;
+Object.assign(TU, { SafeMath, WorldAccess, SafeJSON });
 
-    global.addEventListener('unhandledrejection', function(event) {
-        global.__TU_ERROR_COUNT__++;
-        console.error(`[Unhandled Rejection #${global.__TU_ERROR_COUNT__}]`, event.reason);
-        event.preventDefault();
-    });
-
-    // =============================================================================
-    // 3. 类型守卫系统 (TypeGuards)
-    // =============================================================================
-
-    const TypeGuards = {
-        isValidNumber(val) { return typeof val === 'number' && !isNaN(val) && isFinite(val); },
-        isValidInteger(val) { return Number.isInteger(val); },
-        isValidPositiveInteger(val) { return Number.isInteger(val) && val >= 0; },
-        isValidString(val, maxLength = 10000) { return typeof val === 'string' && val.length <= maxLength; },
-        isValidArray(val) { return Array.isArray(val); },
-        isValidNonEmptyArray(val) { return Array.isArray(val) && val.length > 0; },
-        isValidFunction(val) { return typeof val === 'function'; },
-        isValidObject(val) { return val !== null && typeof val === 'object' && !Array.isArray(val); },
-        isValidCanvas(canvas) { return canvas && typeof canvas.getContext === 'function'; },
-        isValidContext(ctx) { return ctx && typeof ctx.drawImage === 'function'; },
-        isValidCoordinate(x, y, w, h) {
-            return this.isValidInteger(x) && this.isValidInteger(y) &&
-                   this.isValidInteger(w) && this.isValidInteger(h) &&
-                   x >= 0 && x < w && y >= 0 && y < h;
-        },
-        isValidIndex(index, arr) {
-            return this.isValidInteger(index) && this.isValidArray(arr) && index >= 0 && index < arr.length;
-        },
-        isValidTileId(id, maxId = 256) { return this.isValidInteger(id) && id >= 0 && id < maxId; },
-        isGameInstance(g) {
-            return g && typeof g === 'object' && typeof g.loop === 'function';
-        }
-    };
-
-    // =============================================================================
-    // 4. 断言系统 (Assert)
-    // =============================================================================
-
-    const Assert = {
-        enabled: true,
-        fail(message, context = {}) {
-            if (this.enabled) {
-                console.error('[ASSERT FAILED]', message, context);
-                global.__TU_ERROR_COUNT__++;
-            }
-        },
-        ok(condition, message) { if (!condition) this.fail(message); return condition; },
-        isTrue(condition, message) { return this.ok(condition, message); },
-        isNumber(val, name = 'value') { return this.ok(TypeGuards.isValidNumber(val), name + ' must be a valid number'); },
-        isInteger(val, name = 'value') { return this.ok(TypeGuards.isValidInteger(val), name + ' must be an integer'); },
-        inRange(val, min, max, name = 'value') {
-            return this.ok(TypeGuards.isValidNumber(val) && val >= min && val <= max,
-                `${name} must be in range [${min}, ${max}], got ${val}`);
-        },
-        isValidIndex(index, arr, name = 'index') {
-            return this.ok(TypeGuards.isValidIndex(index, arr),
-                `${name} out of bounds: ${index}, length=${arr ? arr.length : 'null'}`);
-        }
-    };
-
-    // =============================================================================
-    // 5. 安全数学运算 (SafeMath)
-    // =============================================================================
-
-    const SafeMath = {
-        clamp(val, min, max) {
-            if (!TypeGuards.isValidNumber(val)) return min;
-            return val < min ? min : val > max ? max : val;
-        },
-        clampInt(val, min, max) {
-            if (!TypeGuards.isValidInteger(val)) return min;
-            return val < min ? min : val > max ? max : val;
-        },
-        divFloor(n, d) { return d === 0 ? 0 : Math.floor(n / d); },
-        toIndex(x, y, width) { return y * width + x; },
-        toChunkCoord(coord, chunkSize) {
-            return coord < 0 ? Math.floor(coord / chunkSize) : (coord / chunkSize) | 0;
-        },
-        toInt32(val) {
-            const n = Number(val);
-            return Number.isFinite(n) ? n | 0 : 0;
-        }
-    };
-
-    // =============================================================================
-    // 6. 边界检查 (BoundaryChecks)
-    // =============================================================================
-
-    const BoundaryChecks = {
-        clamp(val, min, max) { return SafeMath.clamp(val, min, max); },
-        clampInt(val, min, max) { return SafeMath.clampInt(val, min, max); },
-        safeArrayAccess(arr, index, defaultValue = undefined) {
-            if (!TypeGuards.isValidArray(arr)) return defaultValue;
-            if (!TypeGuards.isValidInteger(index) || index < 0 || index >= arr.length) return defaultValue;
-            return arr[index];
-        },
-        safe2DArrayAccess(arr, x, y, defaultValue = undefined) {
-            if (!TypeGuards.isValidArray(arr)) return defaultValue;
-            const col = arr[x];
-            if (!col || !TypeGuards.isValidArray(col)) return defaultValue;
-            if (!TypeGuards.isValidInteger(y) || y < 0 || y >= col.length) return defaultValue;
-            return col[y];
-        },
-        safeDivide(a, b, defaultValue = 0) {
-            if (!TypeGuards.isValidNumber(b) || b === 0) return defaultValue;
-            return a / b;
-        },
-        safeModulo(a, b, defaultValue = 0) {
-            if (!TypeGuards.isValidNumber(b) || b === 0) return defaultValue;
-            return a % b;
-        }
-    };
-
-    // =============================================================================
-    // 7. 输入验证 (InputValidator)
-    // =============================================================================
-
-    const InputValidator = {
-        validateCoordinate(x, y, w, h) {
-            if (!TypeGuards.isValidCoordinate(x, y, w, h)) {
-                return { valid: false, x: SafeMath.clampInt(x | 0, 0, w - 1), y: SafeMath.clampInt(y | 0, 0, h - 1) };
-            }
-            return { valid: true, x, y };
-        },
-        sanitizeString(str) {
-            if (!TypeGuards.isValidString(str)) return '';
-            return str.replace(/[<>&"']/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&#39;' })[c]);
-        },
-        sanitizeNumber(num, defaultVal = 0) {
-            if (!TypeGuards.isValidNumber(num)) return defaultVal;
-            return num;
-        },
-        validateTileId(id, maxId = 256) {
-            if (!TypeGuards.isValidTileId(id, maxId)) return { valid: false, id: SafeMath.clampInt(id | 0, 0, maxId - 1) };
-            return { valid: true, id };
-        },
-        validateLightLevel(val) {
-            if (!TypeGuards.isValidNumber(val) || val < 0 || val > 1) return { valid: false, val: SafeMath.clamp(val || 0, 0, 1) };
-            return { valid: true, val };
-        }
-    };
-
-    // =============================================================================
-    // 8. 错误报告 (ErrorReporter) - 含速率限制
-    // =============================================================================
-
-    const ErrorReporter = {
-        _errors: [],
-        _maxErrors: 50,
-        _lastReport: 0,
-        _minInterval: 100,
-
-        report(error, context = {}) {
-            const now = Date.now();
-            if (now - this._lastReport < this._minInterval) return;
-            if (this._errors.length >= this._maxErrors) return;
-            this._lastReport = now;
-            const entry = {
-                message: error?.message || String(error),
-                stack: error?.stack,
-                context,
-                timestamp: now
-            };
-            this._errors.push(entry);
-            console.error('[ErrorReporter]', entry.message, context);
-        },
-        getErrors() { return [...this._errors]; },
-        clear() { this._errors.length = 0; }
-    };
-
-    // =============================================================================
-    // 9. 资源管理 (ResourceManager)
-    // =============================================================================
-
-    const ResourceManager = {
-        _intervals: [],
-        _timeouts: [],
-        _rafs: [],
-
-        registerInterval(id) { this._intervals.push(id); return id; },
-        registerTimeout(id) { this._timeouts.push(id); return id; },
-        registerRAF(id) { this._rafs.push(id); return id; },
-        disposeAll() {
-            this._intervals.forEach(id => clearInterval(id));
-            this._timeouts.forEach(id => clearTimeout(id));
-            this._rafs.forEach(id => cancelAnimationFrame(id));
-            this._intervals.length = 0;
-            this._timeouts.length = 0;
-            this._rafs.length = 0;
-        }
-    };
-
-    // =============================================================================
-    // 10. 安全 JSON (SafeJSON)
-    // =============================================================================
-
-    const SafeJSON = {
-        parse(str, defaultValue = null) {
-            try { return JSON.parse(str); } catch (e) { return defaultValue; }
-        },
-        stringify(obj, defaultValue = '{}') {
-            try { return JSON.stringify(obj); } catch (e) { return defaultValue; }
-        }
-    };
-
-    // =============================================================================
-    // 11. 世界访问 (WorldAccess)
-    // =============================================================================
-
-    const WorldAccess = {
-        getTile(world, x, y, defaultValue = 0) {
-            if (!world || !world.tiles) return defaultValue;
-            x = x | 0; y = y | 0;
-            if (x < 0 || x >= world.w || y < 0 || y >= world.h) return defaultValue;
-            const col = world.tiles[x];
-            return col ? (col[y] !== undefined ? col[y] : defaultValue) : defaultValue;
-        },
-        setTile(world, x, y, value) {
-            if (!world || !world.tiles) return false;
-            x = x | 0; y = y | 0;
-            if (x < 0 || x >= world.w || y < 0 || y >= world.h) return false;
-            const col = world.tiles[x];
-            if (!col) return false;
-            col[y] = value;
-            return true;
-        },
-        getLight(world, x, y, defaultValue = 0) {
-            if (!world || !world.light) return defaultValue;
-            x = x | 0; y = y | 0;
-            if (x < 0 || x >= world.w || y < 0 || y >= world.h) return defaultValue;
-            const col = world.light[x];
-            return col ? (col[y] !== undefined ? col[y] : defaultValue) : defaultValue;
-        },
-        setLight(world, x, y, value) {
-            if (!world || !world.light) return false;
-            x = x | 0; y = y | 0;
-            if (x < 0 || x >= world.w || y < 0 || y >= world.h) return false;
-            const col = world.light[x];
-            if (!col) return false;
-            col[y] = value;
-            return true;
-        }
-    };
-
-    // =============================================================================
-    // 12. 安全访问包装器 (SafeAccess)
-    // =============================================================================
-
-    const SafeAccess = {
-        get(obj, path, defaultValue = null) {
-            if (!obj || typeof obj !== 'object') return defaultValue;
-            const keys = path.split('.');
-            let current = obj;
-            for (const key of keys) {
-                if (current === null || current === undefined) return defaultValue;
-                current = current[key];
-            }
-            return current !== undefined ? current : defaultValue;
-        },
-        set(obj, path, value) {
-            if (!obj || typeof obj !== 'object') return false;
-            const keys = path.split('.');
-            let current = obj;
-            for (let i = 0; i < keys.length - 1; i++) {
-                const key = keys[i];
-                if (!(key in current) || typeof current[key] !== 'object') current[key] = {};
-                current = current[key];
-            }
-            current[keys[keys.length - 1]] = value;
-            return true;
-        }
-    };
-
-    // =============================================================================
-    // 13. 空对象模式 (NullObjects)
-    // =============================================================================
-
-    const NullObjects = Object.freeze({
-        item: Object.freeze({ id: 0, name: '', count: 0, durability: 0, maxDurability: 0, isEmpty: true }),
-        world: Object.freeze({ w: 0, h: 0, tiles: [], light: [], biomes: [] }),
-        player: Object.freeze({ x: 0, y: 0, vx: 0, vy: 0, health: 100, mana: 50, inventory: [] })
-    });
-
-    // =============================================================================
-    // 14. 导出到全局
-    // =============================================================================
-
-    const TU_Defensive = {
-        WorkerState, ErrorSeverity, EventTypes,
-        TypeGuards, Assert, SafeMath, BoundaryChecks,
-        InputValidator, ErrorReporter, ResourceManager,
-        SafeJSON, WorldAccess, SafeAccess, NullObjects
-    };
-
-    global.TU_Defensive = TU_Defensive;
-    global.TU_DEFENSIVE = TU_Defensive;
-
-    // 全局便捷函数（保持向后兼容）
-    if (!global.safeGet) global.safeGet = function(arr, idx, def) { return BoundaryChecks.safeArrayAccess(arr, idx, def); };
-    if (!global.safeSet) global.safeSet = function(arr, idx, val) { if (arr && idx >= 0 && idx < arr.length) arr[idx] = val; };
-    if (!global.safe2DArrayAccess) global.safe2DArrayAccess = BoundaryChecks.safe2DArrayAccess;
-    if (!global.safeDivide) global.safeDivide = BoundaryChecks.safeDivide;
-    if (!global.safeModulo) global.safeModulo = BoundaryChecks.safeModulo;
-    if (!global.safeJSONParse) global.safeJSONParse = SafeJSON.parse;
-    if (!global.safeJSONStringify) global.safeJSONStringify = SafeJSON.stringify;
-    if (!global.safeGetProp) global.safeGetProp = function(obj, prop, def) { return (obj && typeof obj === 'object') ? (obj[prop] !== undefined ? obj[prop] : def) : def; };
-    if (!global.clamp) global.clamp = function(v, min, max) { return Math.max(min, Math.min(max, v)); };
-    if (!global.lerp) global.lerp = function(a, b, t) { return a + (b - a) * t; };
-    if (!global.worldGetTile) global.worldGetTile = function(w, x, y, d) { return WorldAccess.getTile(w, x, y, d); };
-    if (!global.worldSetTile) global.worldSetTile = function(w, x, y, v) { return WorldAccess.setTile(w, x, y, v); };
-    if (!global.worldGetLight) global.worldGetLight = function(w, x, y, d) { return WorldAccess.getLight(w, x, y, d); };
-    if (!global.worldSetLight) global.worldSetLight = function(w, x, y, v) { return WorldAccess.setLight(w, x, y, v); };
-
-    // TU_SAFE 兼容 (供启动代码使用)
-    global.TU_SAFE = {
-        reportError(error, context) { ErrorReporter.report(error, context); }
-    };
-
-    console.log('[TU_Defensive] 统一防御性模块已加载 v2.0 (consolidated)');
-
-})(typeof window !== 'undefined' ? window : globalThis);
-
-// 加载界面卡死保护
+// Loading timeout protection
 (function() {
-    'use strict';
-    const LOADING_TIMEOUT = 30000;
-    const LOADING_CHECK_INTERVAL = 1000;
-    let loadingStartTime = Date.now();
-    let lastProgress = 0;
-    let stuckCount = 0;
-
-    const checkLoading = () => {
-        const loadingEl = document.getElementById('loading');
-        if (!loadingEl || loadingEl.style.display === 'none') return;
-        const progressEl = document.getElementById('load-progress');
-        const currentProgress = progressEl ? parseInt(progressEl.style.width || '0') : 0;
-        if (currentProgress === lastProgress) { stuckCount++; }
-        else { stuckCount = 0; lastProgress = currentProgress; }
-        const elapsed = Date.now() - loadingStartTime;
-        if (elapsed > LOADING_TIMEOUT || stuckCount > 10) {
-            console.error('[Loading] Timeout or stuck detected');
-            const statusEl = document.getElementById('load-status');
-            if (statusEl) statusEl.textContent = '加载遇到问题，请刷新页面重试';
-            const retryBtn = document.createElement('button');
-            retryBtn.textContent = '重试';
-            retryBtn.style.cssText = 'margin-top: 20px; padding: 10px 20px; font-size: 16px; cursor: pointer;';
-            retryBtn.onclick = () => window.location.reload();
-            const content = document.querySelector('.loading-content');
-            if (content && !document.getElementById('loading-retry-btn')) {
-                retryBtn.id = 'loading-retry-btn';
-                content.appendChild(retryBtn);
+    const TIMEOUT = 30000;
+    let start = Date.now(), lastP = 0, stuck = 0;
+    const check = () => {
+        const el = document.getElementById('loading');
+        if (!el || el.style.display === 'none') return;
+        const p = parseInt((document.getElementById('load-progress') || {}).style?.width || '0') || 0;
+        if (p === lastP) stuck++; else { stuck = 0; lastP = p; }
+        if (Date.now() - start > TIMEOUT || stuck > 10) {
+            const s = document.getElementById('load-status');
+            if (s) s.textContent = '加载遇到问题，请刷新页面重试';
+            const c = document.querySelector('.loading-content');
+            if (c && !document.getElementById('loading-retry-btn')) {
+                const btn = document.createElement('button');
+                btn.id = 'loading-retry-btn'; btn.textContent = '重试';
+                btn.style.cssText = 'margin-top:20px;padding:10px 20px;font-size:16px;cursor:pointer;';
+                btn.onclick = () => window.location.reload();
+                c.appendChild(btn);
             }
-        } else {
-            setTimeout(checkLoading, LOADING_CHECK_INTERVAL);
-        }
+        } else setTimeout(check, 1000);
     };
-    setTimeout(checkLoading, LOADING_CHECK_INTERVAL);
+    setTimeout(check, 1000);
 })();
 </script>
     <style>
         .low-perf #ambient-particles, .low-perf .vfx-layer { display: none !important; }
         #tu-perf-stats { font-family: monospace; }
     </style>
-
 </head>
-<!-- ========================= OPTIMIZED MODULES (Phase 3) ========================= -->
 <script>
-/**
- * EventManager - 统一事件管理，防止内存泄漏
- */
 class EventManager {
-    constructor() {
-        this.listeners = [];
-        this._destroyed = false;
-    }
-    add(target, event, handler, options) {
-        if (this._destroyed) return;
-        target.addEventListener(event, handler, options);
-        this.listeners.push({target, event, handler, options});
-    }
-    removeAll() {
-        for (const {target, event, handler} of this.listeners) {
-            try { target.removeEventListener(event, handler); } catch (e) {}
-        }
-        this.listeners = [];
-    }
-    destroy() {
-        this.removeAll();
-        this._destroyed = true;
-    }
+    constructor() { this.listeners = []; this._destroyed = false; }
+    add(target, event, handler, options) { if (this._destroyed) return; target.addEventListener(event, handler, options); this.listeners.push({target, event, handler, options}); }
+    removeAll() { for (const {target, event, handler} of this.listeners) { try { target.removeEventListener(event, handler); } catch {} } this.listeners = []; }
+    destroy() { this.removeAll(); this._destroyed = true; }
 }
-window.TU = window.TU || {};
-window.TU.EventManager = EventManager;
+TU.EventManager = EventManager;
 
-
-// Safe utilities for robust code
-// Only define simple safe helpers if more robust versions haven't been
-// provided by TU_Defensive. These fallbacks are intentionally minimal and
-// should not override the enhanced implementations (e.g. those bound to
-// BoundaryChecks or SafeAccess) defined earlier. If `window.safeGet` or
-// other helpers already exist, we leave them intact.
-if (typeof window.safeGet === 'undefined') {
-    window.safeGet = function(arr, index, defaultValue) {
-        if (!arr || index < 0 || index >= arr.length) return defaultValue;
-        return arr[index];
-    };
-}
-if (typeof window.safeGetProp === 'undefined') {
-    window.safeGetProp = function(obj, prop, defaultValue) {
-        if (!obj || typeof obj !== 'object') return defaultValue;
-        return obj[prop] !== undefined ? obj[prop] : defaultValue;
-    };
-}
-if (typeof window.safeJSONParse === 'undefined') {
-    window.safeJSONParse = function(str, defaultValue) {
-        try { return JSON.parse(str); } catch (e) { return defaultValue; };
-    };
-}
-if (typeof window.clamp === 'undefined') {
-    window.clamp = function(v, min, max) {
-        return Math.max(min, Math.min(max, v));
-    };
-}
-if (typeof window.lerp === 'undefined') {
-    window.lerp = function(a, b, t) {
-        return a + (b - a) * t;
-    };
-}
-
-// Ring buffer for input prediction
 class RingBuffer {
-    constructor(size) {
-        this.size = size;
-        this.buffer = new Array(size);
-        this.head = 0;
-        this.count = 0;
-    }
-    push(item) {
-        this.buffer[this.head] = item;
-        this.head = (this.head + 1) % this.size;
-        if (this.count < this.size) this.count++;
-    }
-    get(index) {
-        if (index < 0 || index >= this.count) return null;
-        const i = (this.head - this.count + index + this.size) % this.size;
-        return this.buffer[i];
-    }
-    clear() {
-        this.head = 0;
-        this.count = 0;
-    }
+    constructor(size) { this.size = size; this.buffer = new Array(size); this.head = 0; this.count = 0; }
+    push(item) { this.buffer[this.head] = item; this.head = (this.head + 1) % this.size; if (this.count < this.size) this.count++; }
+    get(index) { if (index < 0 || index >= this.count) return null; return this.buffer[(this.head - this.count + index + this.size) % this.size]; }
+    clear() { this.head = 0; this.count = 0; }
 }
 window.RingBuffer = RingBuffer;
-</script>
 
-<script>
-/**
- * ParticlePool - 粒子对象池，消除GC卡顿
- */
 class ParticlePool {
-    constructor(maxSize = 500) {
-        this.maxSize = maxSize;
-        this.pool = [];
-        this.active = [];
-        this._createPool();
-    }
-    _createPool() {
-        for (let i = 0; i < this.maxSize; i++) {
-            this.pool.push({x:0, y:0, vx:0, vy:0, life:0, maxLife:0, color:'', size:0, active:false});
-        }
-    }
-    spawn(x, y, vx, vy, color, size, life) {
-        let particle = this.pool.length > 0 ? this.pool.pop() : 
-                      (this.active.length > 0 ? this.active.shift() : null);
-        if (!particle) return null;
-        particle.x = x; particle.y = y; particle.vx = vx; particle.vy = vy;
-        particle.color = color; particle.size = size; particle.life = life;
-        particle.maxLife = life; particle.active = true;
-        this.active.push(particle);
-        return particle;
-    }
-    update(dt) {
-        for (let i = this.active.length - 1; i >= 0; i--) {
-            const p = this.active[i];
-            p.x += p.vx * dt; p.y += p.vy * dt; p.life -= dt;
-            if (p.life <= 0) {
-                p.active = false;
-                this.active.splice(i, 1);
-                this.pool.push(p);
-            }
-        }
-    }
-    render(ctx, camX, camY) {
-        for (const p of this.active) {
-            ctx.globalAlpha = p.life / p.maxLife;
-            ctx.fillStyle = p.color;
-            ctx.fillRect(p.x - camX, p.y - camY, p.size, p.size);
-        }
-        ctx.globalAlpha = 1;
-    }
+    constructor(maxSize = 500) { this.maxSize = maxSize; this.pool = []; this.active = []; this._createPool(); }
+    _createPool() { for (let i = 0; i < this.maxSize; i++) this.pool.push({x:0,y:0,vx:0,vy:0,life:0,maxLife:0,color:'',size:0,active:false}); }
+    spawn(x,y,vx,vy,color,size,life) { let p = this.pool.length > 0 ? this.pool.pop() : (this.active.length > 0 ? this.active.shift() : null); if (!p) return null; p.x=x;p.y=y;p.vx=vx;p.vy=vy;p.color=color;p.size=size;p.life=life;p.maxLife=life;p.active=true; this.active.push(p); return p; }
+    update(dt) { for (let i=this.active.length-1;i>=0;i--) { const p=this.active[i]; p.x+=p.vx*dt;p.y+=p.vy*dt;p.life-=dt; if(p.life<=0){p.active=false;this.active.splice(i,1);this.pool.push(p);}} }
+    render(ctx,camX,camY) { for(const p of this.active){ctx.globalAlpha=p.life/p.maxLife;ctx.fillStyle=p.color;ctx.fillRect(p.x-camX,p.y-camY,p.size,p.size);} ctx.globalAlpha=1; }
 }
-window.TU.ParticlePool = ParticlePool;
-</script>
+TU.ParticlePool = ParticlePool;
 
-<script>
-/**
- * Performance Monitor - 性能监控
- */
 window.PERF_MONITOR = {
     frames: [], maxFrames: 60,
     record(ft) { this.frames.push(ft); if (this.frames.length > this.maxFrames) this.frames.shift(); },
     getAverageFPS() { return this.frames.length ? Math.round(1000 / (this.frames.reduce((a,b)=>a+b,0)/this.frames.length)) : 60; }
 };
 </script>
-<!-- ========================= END OPTIMIZED MODULES ========================= -->
-
-
 <body>
     <canvas id="game"></canvas>
     <!-- 环境粒子 -->
@@ -3162,8 +2735,7 @@ window.PERF_MONITOR = {
 
     <!-- ========================= SECTION: Namespace & Global Guards ========================= -->
 
-    <!-- ========================= MODULE: core/tu_namespace ========================= -->
-    <script>
+    <!-- ========================= MODULE: core/tu_namespace ========================= --><script>
 
         // ╔═══════════════════════════════════════════════════════════════════════════════╗
         // ║                    TERRARIA ULTRA - 全面深度优化 v3                           ║
@@ -3884,82 +3456,10 @@ window.PERF_MONITOR = {
         });
 
         window.TU = window.TU || {};
-    </script>
-
-    <!-- ========================= MODULE: core/naming_aliases ========================= -->
-    <script>
-        (() => {
-            'use strict';
-            const TU = window.TU = window.TU || {};
-
-            // Canonical, search-friendly aliases (non-breaking): they resolve lazily.
-            const defineAlias = (aliasName, targetGetter) => {
-                try {
-                    if (Object.prototype.hasOwnProperty.call(TU, aliasName)) return;
-                    Object.defineProperty(TU, aliasName, { configurable: true, enumerable: false, get: targetGetter });
-                } catch (e) { if (typeof console !== 'undefined' && console.debug) console.debug('[Debug] Silently caught:', e); }
-            };
-
-            defineAlias('Constants', () => TU.CONFIG ?? window.CONFIG);
-            defineAlias('Blocks', () => TU.BLOCK ?? window.BLOCK);
-            defineAlias('GameCore', () => TU.Game);
-            defineAlias('RendererSystem', () => TU.Renderer);
-            defineAlias('WorldGeneratorSystem', () => TU.WorldGenerator);
-            defineAlias('TileLogicSystem', () => TU.TileLogicEngine);
-        })();
-    </script>
-
-    <!-- ========================= SECTION: Boot & Loading UI ========================= -->
-
-    <!-- ========================= MODULE: boot/loading_particles ========================= -->
-    <script>
-
-        /**
-         * ═══════════════════════════════════════════════════════════════════════════════
-         *                    TERRARIA ULTRA - AESTHETIC EDITION
-         * ═══════════════════════════════════════════════════════════════════════════════
-         *  全面美学优化版 - 玻璃态UI | 渐变色彩 | 粒子特效 | 流畅动画
-         * ═══════════════════════════════════════════════════════════════════════════════
-         */
-
-        // 初始化加载粒子
-        (function initLoadingParticles() {
-            const container = document.querySelector('.loading-particles');
-            if (!container) return;
-            const frag = document.createDocumentFragment();
-            const colors = ['#ffeaa7', '#fd79a8', '#a29bfe', '#74b9ff'];
-            // 动态粒子数量：综合硬件线程数与 DPR，低端/高 DPR 设备更省电
-            const cores = navigator.hardwareConcurrency || 4;
-            const dpr = window.devicePixelRatio || 1;
-            const reduce = (() => {
-                try { return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches); } catch { return false; }
-            })();
-            let particleCount = Math.round(18 + cores * 2);
-            if (dpr >= 2) particleCount -= 4;
-            if (dpr >= 3) particleCount -= 6;
-            if (reduce) particleCount = Math.min(particleCount, 16);
-            particleCount = Math.max(12, Math.min(60, particleCount));
-            for (let i = 0; i < particleCount; i++) {
-                const p = document.createElement('div');
-                p.className = 'particle';
-                p.style.left = (Math.random() * 100).toFixed(3) + '%';
-                p.style.animationDelay = (Math.random() * 10).toFixed(2) + 's';
-                p.style.animationDuration = (8 + Math.random() * 6).toFixed(2) + 's';
-                p.style.background = colors[(Math.random() * colors.length) | 0];
-                frag.appendChild(p);
-            }
-            container.appendChild(frag);
-        })();
-
-        // ═══════════════════════════════════════════════════════════════════════════════
-        //                                  工具函数
-        // ═══════════════════════════════════════════════════════════════════════════════
-    </script>
-
-    <!-- ========================= SECTION: Constants & Utilities ========================= -->
-
-    <!-- ========================= MODULE: core/utils_dom ========================= -->
-    <script>
+    
+</script>
+<script>
+    
         const __hexToRgbCache = new Map();
         const __rgb0 = Object.freeze({ r: 0, g: 0, b: 0 });
 
@@ -4169,56 +3669,16 @@ window.PERF_MONITOR = {
         // ───────────────────────── Exports ─────────────────────────
         window.TU = window.TU || {};
         Object.assign(window.TU, { Utils, DOM, UI_IDS, INPUT_KEYS, MOUSE_BUTTON, INVENTORY_LIMITS });
+(function() {
+    try {
+        const ok = !!(window.CSS && (CSS.supports('backdrop-filter: blur(1px)') || CSS.supports('-webkit-backdrop-filter: blur(1px)')));
+        document.documentElement.classList.toggle('no-backdrop', !ok);
+    } catch { document.documentElement.classList.add('no-backdrop'); }
+})();
+window.TU = window.TU || {};
 
-        // ───────────────────────────────────────────────────────────────────────────────
-        //                               PatchManager（统一补丁/包裹标记）
-        // 目的：合并散落的 __tu_xxxWrapped 标志逻辑，提升可维护性；并提供 once/wrap 工具。
-        // ───────────────────────────────────────────────────────────────────────────────
-        class PatchManager {
-
-            /** 仅执行一次 */
-            static once(key, fn) {
-                if (PatchManager.flags[key]) return false;
-                PatchManager.flags[key] = 1;
-                try { fn && fn(); } catch (e) { console.warn('[TU] patch once failed', key, e); }
-                return true;
-            }
-            /** 包裹原型方法，仅一次；wrapper: (orig) => function */
-            static wrapProto(proto, method, key, wrapper) {
-                if (!proto) return false;
-                const orig = proto[method];
-                if (typeof orig !== 'function') return false;
-                const mark = '__tu_wrap_' + key;
-                if (orig[mark]) return false;
-                const wrapped = wrapper(orig);
-                try { wrapped[mark] = true; } catch (e) { if (typeof console !== 'undefined' && console.debug) console.debug('[Debug] Silently caught:', e); }
-                proto[method] = wrapped;
-                return true;
-            }
-        }
-        PatchManager.flags = (window.__TU_PATCH_ONCE__ = window.__TU_PATCH_ONCE__ || Object.create(null));
-
-        // ───────────────────────────────────────────────────────────────────────────────
-        //                    Backdrop-filter 支持检测（无则自动降级）
-        // ───────────────────────────────────────────────────────────────────────────────
-        (function detectBackdropFilterSupport() {
-            try {
-                const ok = !!(window.CSS && (CSS.supports('backdrop-filter: blur(1px)') || CSS.supports('-webkit-backdrop-filter: blur(1px)')));
-                document.documentElement.classList.toggle('no-backdrop', !ok);
-            } catch {
-                document.documentElement.classList.add('no-backdrop');
-            }
-        })();
-
-        // ───────────────────────── Exports ─────────────────────────
-        window.TU = window.TU || {};
-        Object.assign(window.TU, { PatchManager });
-    </script>
-
-    <!-- ========================= SECTION: Core Systems ========================= -->
-
-    <!-- ========================= MODULE: systems/settings ========================= -->
-    <script>
+</script>
+<script>
         class GameSettings {
             static KEY = 'terraria_ultra_settings_v1';
             static defaults() {
@@ -4387,12 +3847,11 @@ window.PERF_MONITOR = {
         window.TU = window.TU || {};
         Object.assign(window.TU, { GameSettings });
 
-    </script>
-
-    <!-- ========================= SECTION: UI ========================= -->
-
-    <!-- ========================= MODULE: ui/toast ========================= -->
-    <script>
+    
+window.TU = window.TU || {};
+Object.assign(window.TU, { GameSettings });
+</script>
+<script>
         class Toast {
             static el() { return document.getElementById('toast-container'); }
             static show(msg, ms = 1600) {
@@ -4415,11 +3874,8 @@ window.PERF_MONITOR = {
         Object.assign(window.TU, { Toast });
 
     </script>
-
-    <!-- ========================= SECTION: Core Systems ========================= -->
-
-    <!-- ========================= MODULE: systems/fullscreen_manager ========================= -->
-    <script>
+<script>
+    
         (() => {
             'use strict';
 
@@ -4485,9 +3941,7 @@ window.PERF_MONITOR = {
             window.TU.FullscreenManager = FullscreenManager;
         })();
     </script>
-
-    <!-- ========================= MODULE: systems/audio ========================= -->
-    <script>
+<script>
         class AudioManager {
             constructor(settings) {
                 this.settings = settings;
@@ -4607,10 +4061,80 @@ window.PERF_MONITOR = {
         window.TU = window.TU || {};
         Object.assign(window.TU, { AudioManager });
 
-    </script>
+    
+// --- Weather Audio (consolidated from weather_lighting_audio_sync_v1 patch) ---
+AudioManager.prototype._makeLoopNoiseBuffer = function(seconds) {
+    try {
+        if (!this.ctx) return null;
+        const ctx = this.ctx, sr = ctx.sampleRate || 44100;
+        const len = Math.max(1, (sr * (seconds || 2)) | 0);
+        const buf = ctx.createBuffer(1, len, sr);
+        const d = buf.getChannelData(0);
+        for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1);
+        const fade = Math.min((sr * 0.02) | 0, (len / 2) | 0);
+        for (let i = 0; i < fade; i++) { const t = i / fade; d[i] *= t; d[len - 1 - i] *= t; }
+        return buf;
+    } catch { return null; }
+};
 
-    <!-- ========================= MODULE: systems/save ========================= -->
-    <script>
+AudioManager.prototype._startRainSynth = function() {
+    if (!this.ctx) return false;
+    const ctx = this.ctx;
+    if (ctx.state === 'suspended') return false;
+    const st = this._rainSynth || (this._rainSynth = { active: false, dropAcc: 0 });
+    if (st.active) return true;
+    if (!st.buf) st.buf = this._makeLoopNoiseBuffer(2.0);
+    if (!st.buf) return false;
+    const src = ctx.createBufferSource(); src.buffer = st.buf; src.loop = true;
+    const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 140;
+    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 4200;
+    const gain = ctx.createGain(); gain.gain.value = 0;
+    src.connect(hp); hp.connect(lp); lp.connect(gain); gain.connect(ctx.destination);
+    try { src.start(); } catch {}
+    Object.assign(st, { src, hp, lp, gain, active: true, dropAcc: 0 });
+    return true;
+};
+
+AudioManager.prototype._stopRainSynth = function() {
+    const st = this._rainSynth;
+    if (!st || !st.active) return;
+    st.active = false;
+    try { if (this.ctx && st.gain?.gain) { try { st.gain.gain.setTargetAtTime(0, this.ctx.currentTime, 0.08); } catch { st.gain.gain.value = 0; } } } catch {}
+    const { src, hp, lp, gain } = st;
+    st.src = st.hp = st.lp = st.gain = null;
+    setTimeout(() => { try { src?.stop(); } catch {} try { src?.disconnect(); } catch {} try { hp?.disconnect(); } catch {} try { lp?.disconnect(); } catch {} try { gain?.disconnect(); } catch {} }, 520);
+};
+
+AudioManager.prototype.updateWeatherAmbience = function(dtMs, weather) {
+    const wType = weather?.type || 'clear';
+    const wInt = Number.isFinite(weather?.intensity) ? weather.intensity : 0;
+    const wantRain = (wInt > 0.06) && (wType === 'rain' || wType === 'thunder');
+    const thunder = (wType === 'thunder');
+    if (!this.ctx || !this.enabled) return;
+    const sv = Number.isFinite(this.settings?.sfxVolume) ? this.settings.sfxVolume : 0;
+    if (sv <= 0.001) { if (this._rainSynth?.active) this._stopRainSynth(); return; }
+    if (!wantRain) { if (this._rainSynth?.active) this._stopRainSynth(); return; }
+    if (!this._startRainSynth()) return;
+    const st = this._rainSynth;
+    if (!st?.active || !this.ctx) return;
+    const ctx = this.ctx, now = ctx.currentTime;
+    const base = sv * (thunder ? 0.22 : 0.16);
+    const targetVol = base * Math.min(1, Math.max(0, wInt));
+    try { st.gain.gain.setTargetAtTime(targetVol, now, 0.08); } catch { st.gain.gain.value = targetVol; }
+    try { st.hp.frequency.setTargetAtTime(110 + wInt * (thunder ? 260 : 200), now, 0.08); } catch {}
+    try { st.lp.frequency.setTargetAtTime(2600 + wInt * (thunder ? 5200 : 4200), now, 0.08); } catch {}
+    st.dropAcc = (st.dropAcc || 0) + (dtMs || 0);
+    const rate = (thunder ? 3.2 : 2.2) + wInt * (thunder ? 7.0 : 5.0);
+    const interval = 1000 / Math.max(0.8, rate);
+    let fired = 0;
+    while (st.dropAcc >= interval && fired < 4) {
+        st.dropAcc -= interval; fired++;
+        if (Math.random() < 0.35) continue;
+        try { this.noise(0.018 + Math.random() * 0.03, (thunder ? 0.055 : 0.045) + wInt * 0.065); } catch {}
+    }
+};
+</script>
+<script>
         class SaveSystem {
             static KEY = 'terraria_ultra_save_v1';
             constructor(game) {
@@ -4919,484 +4443,7 @@ window.PERF_MONITOR = {
         Object.assign(window.TU, { SaveSystem });
 
     </script>
-
-    <!-- ========================= SECTION: UI ========================= -->
-
-    <!-- ========================= MODULE: ui/ux_wiring ========================= -->
-    <script>
-        /** 让 UI 文案自动适配设备 */
-        function applyInfoHintText(isMobile) {
-            const el = document.getElementById('info');
-            if (!el) return;
-
-            // SECURITY: avoid innerHTML. Build DOM nodes to prevent XSS surface area.
-            if (!isMobile) return;
-
-            try {
-                // Clear existing nodes
-                while (el.firstChild) el.removeChild(el.firstChild);
-
-                const parts = [
-                    ['摇杆', ' 移动'],
-                    ['⬆️', ' 跳跃'],
-                    ['⛏️', ' 挖掘'],
-                    ['🧱', ' 放置'],
-                    ['⚒️', ' 合成'],
-                    ['🎒', ' 背包'],
-                ];
-
-                for (let i = 0; i < parts.length; i++) {
-                    const [label, text] = parts[i];
-
-                    const span = document.createElement('span');
-                    span.className = 'highlight';
-                    span.textContent = String(label);
-
-                    el.appendChild(span);
-                    el.appendChild(document.createTextNode(String(text)));
-
-                    if (i < parts.length - 1) {
-                        el.appendChild(document.createTextNode(' | '));
-                    }
-                }
-            } catch (e) {
-                // Fall back to plain text if DOM ops fail for any reason
-                try {
-                    el.textContent = '摇杆 移动 | ⬆️ 跳跃 | ⛏️ 挖掘 | 🧱 放置 | ⚒️ 合成 | 🎒 背包';
-                } catch (_) {}
-            }
-        }
-
-        function wireUXUI(game) {
-            // 顶部按钮
-            const btnPause = document.getElementById('btn-pause');
-            const btnSettings = document.getElementById('btn-settings');
-            const btnSave = document.getElementById('btn-save');
-            const btnHelp = document.getElementById('btn-help');
-
-            const pauseOverlay = document.getElementById('pause-overlay');
-            const settingsOverlay = document.getElementById('settings-overlay');
-            const helpOverlay = document.getElementById('help-overlay');
-
-            const _overlayStack = [];
-            const _overlayFocusStack = [];
-            const _firstFocusable = (root) => {
-                if (!root) return null;
-                return root.querySelector('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])');
-            };
-
-            const showOverlay = (el) => {
-                if (!el) return;
-
-                // 已经打开：只把焦点拉回面板内，避免重复入栈导致焦点/状态错乱
-                try {
-                    if (el.classList && el.classList.contains('show')) {
-                        queueMicrotask(() => {
-                            const t = _firstFocusable(el) || el;
-                            try { t.focus({ preventScroll: true }); } catch { }
-                        });
-                        return;
-                    }
-                } catch { }
-
-                // 记录焦点：关闭时尽可能回到原控件
-                const prev = (document.activeElement instanceof HTMLElement) ? document.activeElement : null;
-                _overlayStack.push(el);
-                _overlayFocusStack.push(prev);
-
-                el.classList.add('show');
-                el.setAttribute('aria-hidden', 'false');
-                el.setAttribute('role', 'dialog');
-                el.setAttribute('aria-modal', 'true');
-
-                document.body.classList.add('tu-modal-open');
-                game._inputBlocked = true;
-                if (Utils && Utils.resetGameInput) Utils.resetGameInput(game);
-
-                // 自动聚焦面板内第一个可交互控件，键盘/手柄更友好
-                queueMicrotask(() => {
-                    const t = _firstFocusable(el) || el;
-                    try { t.focus({ preventScroll: true }); } catch { }
-                });
-            };
-
-            const hideOverlay = (el) => {
-                if (!el) return;
-
-                el.classList.remove('show');
-                el.setAttribute('aria-hidden', 'true');
-                el.removeAttribute('aria-modal');
-
-                // 从栈中移除（支持“嵌套”弹窗：帮助 -> 设置 等）
-                const idx = _overlayStack.lastIndexOf(el);
-                let prev = null;
-                if (idx !== -1) {
-                    _overlayStack.splice(idx, 1);
-                    prev = _overlayFocusStack.splice(idx, 1)[0] || null;
-                }
-
-                // 只有当所有 overlay 都关闭时才解除屏蔽
-                const anyOpen =
-                    (pauseOverlay && pauseOverlay.classList.contains('show')) ||
-                    (settingsOverlay && settingsOverlay.classList.contains('show')) ||
-                    (helpOverlay && helpOverlay.classList.contains('show')) ||
-                    (game.inventoryUI && game.inventoryUI.isOpen) ||
-                    (game.crafting && game.crafting.isOpen);
-
-                game._inputBlocked = anyOpen;
-                if (!anyOpen) document.body.classList.remove('tu-modal-open');
-
-                // 还原焦点
-                if (prev && document.contains(prev)) {
-                    queueMicrotask(() => {
-                        try { prev.focus({ preventScroll: true }); } catch { }
-                    });
-                }
-            };
-
-            const setPaused = (v) => {
-                game.paused = !!v;
-                if (game.paused) showOverlay(pauseOverlay);
-                else hideOverlay(pauseOverlay);
-            };
-
-            // 交给 InputManager 统一处理键盘（Esc/H 等），避免多个 keydown 监听相互“抢键”
-            game._ux = {
-                pauseOverlay,
-                settingsOverlay,
-                helpOverlay,
-                showOverlay,
-                hideOverlay,
-                setPaused,
-                isHelpOpen: () => !!(helpOverlay && helpOverlay.classList.contains('show')),
-                isSettingsOpen: () => !!(settingsOverlay && settingsOverlay.classList.contains('show')),
-                closeSettings: () => {
-                    // 统一关闭逻辑：根据进入前状态决定返回暂停菜单或继续游戏
-                    hideOverlay(settingsOverlay);
-                    if (game._settingsReturnToPause) {
-                        showOverlay(pauseOverlay);
-                        game.paused = true;
-                    } else {
-                        game.paused = false;
-                        hideOverlay(pauseOverlay);
-                    }
-                },
-                isPauseOpen: () => !!(pauseOverlay && pauseOverlay.classList.contains('show')),
-                toggleHelp: () => {
-                    if (!helpOverlay) return;
-                    if (helpOverlay.classList.contains('show')) {
-                        hideOverlay(helpOverlay);
-                    } else {
-                        showOverlay(helpOverlay);
-                    }
-                    try { localStorage.setItem('terraria_ultra_help_seen_v1', '1'); } catch { }
-                }
-            };
-
-            if (btnPause) btnPause.addEventListener('click', () => { game.audio && game.audio.play('ui'); setPaused(!game.paused); });
-            if (btnSettings) btnSettings.addEventListener('click', () => {
-                game.audio && game.audio.play('ui');
-
-                // 记录：进入设置前是否已处于暂停（用于返回逻辑）
-                game._settingsReturnToPause = !!game.paused;
-
-                // 同步控件值
-                syncSettingsControls(game.settings);
-
-                // 设置面板打开时：暂停游戏、隐藏暂停菜单（避免叠层）
-                game.paused = true;
-                hideOverlay(pauseOverlay);
-                showOverlay(settingsOverlay);
-            });
-            if (btnSave) btnSave.addEventListener('click', () => {
-                game.audio && game.audio.play('ui');
-                game.saveSystem.save('manual');
-            });
-            if (btnHelp) btnHelp.addEventListener('click', () => {
-                game.audio && game.audio.play('ui');
-                if (helpOverlay) showOverlay(helpOverlay);
-                try { localStorage.setItem('terraria_ultra_help_seen_v1', '1'); } catch { }
-            });
-
-            // 暂停面板按钮
-            const pauseClose = document.getElementById('pause-close');
-            const pauseResume = document.getElementById('pause-resume');
-            const pauseSave = document.getElementById('pause-save');
-            const pauseNew = document.getElementById('pause-newworld');
-            const pauseFullscreen = document.getElementById('pause-fullscreen');
-
-            const resume = () => { game.audio && game.audio.play('ui'); game.paused = false; hideOverlay(pauseOverlay); };
-            if (pauseClose) pauseClose.addEventListener('click', resume);
-            if (pauseResume) pauseResume.addEventListener('click', resume);
-            if (pauseSave) pauseSave.addEventListener('click', () => { game.audio && game.audio.play('ui'); game.saveSystem.save('manual'); });
-            if (pauseNew) pauseNew.addEventListener('click', () => {
-                game.audio && game.audio.play('ui');
-                if (confirm('确定要开启新世界吗？这会清除当前存档。')) {
-                    SaveSystem.clear();
-                    location.reload();
-                }
-            });
-
-            const toggleFullscreen = async () => {
-                const fm = window.TU && window.TU.FullscreenManager;
-                if (fm && typeof fm.toggle === 'function') return fm.toggle();
-                // fallback（极简）
-                try {
-                    const doc = document;
-                    if (doc.fullscreenElement && doc.exitFullscreen) await doc.exitFullscreen();
-                    else if (doc.documentElement && doc.documentElement.requestFullscreen) await doc.documentElement.requestFullscreen();
-                } catch { }
-            };
-            if (pauseFullscreen) pauseFullscreen.addEventListener('click', () => { game.audio && game.audio.play('ui'); toggleFullscreen(); });
-
-            // 设置面板按钮
-            const settingsClose = document.getElementById('settings-close');
-            const settingsApply = document.getElementById('settings-apply');
-            const settingsReset = document.getElementById('settings-reset');
-            const settingsClear = document.getElementById('settings-clear-save');
-
-            if (settingsClose) settingsClose.addEventListener('click', () => {
-                game.audio && game.audio.play('ui');
-                // 关闭设置：若原本在暂停菜单中进入，则返回暂停菜单；否则继续游戏
-                hideOverlay(settingsOverlay);
-                if (game._settingsReturnToPause) {
-                    showOverlay(pauseOverlay);
-                    game.paused = true;
-                } else {
-                    game.paused = false;
-                    hideOverlay(pauseOverlay);
-                }
-            });
-            if (settingsReset) settingsReset.addEventListener('click', () => {
-                game.audio && game.audio.play('ui');
-                game.settings = GameSettings.applyToDocument(GameSettings.defaults());
-                if (game.quality && typeof game.quality.onSettingsChanged === 'function') game.quality.onSettingsChanged();
-                GameSettings.save(game.settings);
-                syncSettingsControls(game.settings);
-
-                // 体验参数即时生效
-                game._placeIntervalMs = game.settings.placeIntervalMs || game._placeIntervalMs;
-
-                // reset 后回到高特效
-                try { game._setQuality && game._setQuality('high'); } catch { }
-                if (game._perf) { game._perf.lowForMs = 0; game._perf.highForMs = 0; }
-
-                // resize 让 DPR 立即生效
-                if (game.renderer) game.renderer.resize();
-                if (game.audio) game.audio.setVolume(game.settings.sfxVolume);
-                Toast.show('↩ 已恢复默认');
-            });
-            if (settingsClear) settingsClear.addEventListener('click', () => {
-                game.audio && game.audio.play('ui');
-                if (confirm('确定删除存档吗？')) {
-                    SaveSystem.clear();
-                    Toast.show('🗑 已删除存档');
-                }
-            });
-
-            if (settingsApply) settingsApply.addEventListener('click', () => {
-                game.audio && game.audio.play('ui');
-                const prevAuto = !!(game.settings && game.settings.autoQuality);
-                const s = readSettingsControls(game.settings);
-                game.settings = GameSettings.applyToDocument(s);
-                if (game.quality && typeof game.quality.onSettingsChanged === 'function') game.quality.onSettingsChanged();
-                GameSettings.save(game.settings);
-
-                // 体验参数即时生效
-                game._placeIntervalMs = game.settings.placeIntervalMs || game._placeIntervalMs;
-
-                // 自动性能调节：如果用户关闭，则立即恢复高特效并停止自动切档
-                if (prevAuto && game.settings.autoQuality === false) {
-                    try { game._setQuality && game._setQuality('high'); } catch { }
-                    if (game._perf) { game._perf.lowForMs = 0; game._perf.highForMs = 0; }
-                }
-
-                if (game.audio) game.audio.setVolume(game.settings.sfxVolume);
-                if (game.renderer) game.renderer.resize(); // DPR 立即生效
-                Toast.show('✅ 已应用设置');
-                hideOverlay(settingsOverlay);
-                if (game._settingsReturnToPause) {
-                    showOverlay(pauseOverlay);
-                    game.paused = true;
-                } else {
-                    game.paused = false;
-                    hideOverlay(pauseOverlay);
-                }
-            });
-
-            // 设置面板：滑块实时显示数值
-            const $ = (id) => document.getElementById(id);
-            const bindRange = (rangeId, valId, fmt) => {
-                const r = $(rangeId);
-                const v = $(valId);
-                if (!r || !v) return;
-                const update = () => { v.textContent = fmt(r.value); };
-                r.addEventListener('input', update, { passive: true });
-                r.addEventListener('change', update, { passive: true });
-                update();
-            };
-            bindRange('opt-joy', 'val-joy', (x) => x + 'px');
-            bindRange('opt-btn', 'val-btn', (x) => x + 'px');
-            bindRange('opt-sfx', 'val-sfx', (x) => x + '%');
-            bindRange('opt-camsmooth', 'val-camsmooth', (x) => (Number(x) / 100).toFixed(2));
-            bindRange('opt-lookahead', 'val-lookahead', (x) => (Number(x) / 100).toFixed(2) + 'x');
-            bindRange('opt-placeinterval', 'val-placeinterval', (x) => x + 'ms');
-
-            // 帮助面板按钮 + 首次进入自动弹出
-            const helpClose = document.getElementById('help-close');
-            const helpOk = document.getElementById('help-ok');
-            const helpDont = document.getElementById('help-dontshow');
-            const markHelpSeen = () => { try { localStorage.setItem('terraria_ultra_help_seen_v1', '1'); } catch { } };
-
-            const closeHelp = () => { game.audio && game.audio.play('ui'); hideOverlay(helpOverlay); markHelpSeen(); };
-            if (helpClose) helpClose.addEventListener('click', closeHelp);
-            if (helpOk) helpOk.addEventListener('click', closeHelp);
-            if (helpDont) helpDont.addEventListener('click', () => { markHelpSeen(); closeHelp(); });
-
-            try {
-                const seen = localStorage.getItem('terraria_ultra_help_seen_v1');
-                if (!seen && helpOverlay) {
-                    // 不抢占加载提示：延迟一点点
-                    setTimeout(() => {
-                        try {
-                            const savePrompt = document.getElementById('save-prompt-overlay');
-                            if (savePrompt && savePrompt.classList.contains('show')) return;
-                            showOverlay(helpOverlay);
-                        } catch { }
-                    }, 800);
-                }
-            } catch { }
-
-            // 页面失焦/切后台：自动保存 + 自动暂停（移动端更友好）
-            document.addEventListener('visibilitychange', () => {
-                if (document.hidden) {
-                    try { game.saveSystem.save('autosave'); } catch { }
-                    try { if (game._stopRafForHidden) game._stopRafForHidden(); } catch { }
-                    game.paused = true;
-                    if (pauseOverlay) showOverlay(pauseOverlay);
-                } else {
-                    // 回到前台：仅恢复 RAF（仍保持暂停，避免误操作）
-                    try { if (game._resumeRafIfNeeded) game._resumeRafIfNeeded(); } catch { }
-                }
-            }, { passive: true });
-
-            window.addEventListener('beforeunload', () => {
-                try { game.saveSystem.save('autosave'); } catch { }
-            });
-
-            // 点击空白遮罩关闭（暂停/设置/帮助），体验更像“HUD面板”
-            const _bindBackdropClose = (overlayEl, onClose) => {
-                if (!overlayEl) return;
-                // 防重复绑定：避免重复监听导致多次触发
-                if (overlayEl.__tuBackdropBound) return;
-                overlayEl.__tuBackdropBound = true;
-                // pointerdown：比 click 更及时；passive:false 允许 preventDefault
-                overlayEl.addEventListener('pointerdown', (e) => {
-                    if (e.target !== overlayEl) return;
-                    e.preventDefault();
-                    e.stopPropagation();
-                    try { onClose && onClose(); } catch { }
-                }, { passive: false });
-            };
-
-            // 注意：pauseOverlay 的关闭逻辑就是“继续游戏”
-            _bindBackdropClose(pauseOverlay, () => {
-                if (!game.paused) return;
-                game.audio && game.audio.play('ui');
-                game.paused = false;
-                hideOverlay(pauseOverlay);
-            });
-
-            _bindBackdropClose(helpOverlay, () => {
-                if (!helpOverlay || !helpOverlay.classList.contains('show')) return;
-                game.audio && game.audio.play('ui');
-                hideOverlay(helpOverlay);
-                try { localStorage.setItem('terraria_ultra_help_seen_v1', '1'); } catch { }
-            });
-
-            _bindBackdropClose(settingsOverlay, () => {
-                if (!settingsOverlay || !settingsOverlay.classList.contains('show')) return;
-                game.audio && game.audio.play('ui');
-                if (game._ux && typeof game._ux.closeSettings === 'function') game._ux.closeSettings();
-                else hideOverlay(settingsOverlay);
-            });
-        }
-
-        function syncSettingsControls(settings) {
-            const s = GameSettings.sanitize(settings);
-            const $ = (id) => document.getElementById(id);
-
-            const dpr = $('opt-dpr'); if (dpr) dpr.value = String(s.dprCap);
-            const p = $('opt-particles'); if (p) p.value = s.particles ? '1' : '0';
-            const a = $('opt-ambient'); if (a) a.value = s.ambient ? '1' : '0';
-            const m = $('opt-minimap'); if (m) m.value = s.minimap ? '1' : '0';
-            const bm = $('opt-bgmountains'); if (bm) bm.value = s.bgMountains ? '1' : '0';
-            const fx = $('opt-postfx'); if (fx) fx.value = String(s.postFxMode);
-
-            const aim = $('opt-aimassist'); if (aim) aim.value = s.aimAssist ? '1' : '0';
-            const vib = $('opt-vibration'); if (vib) vib.value = s.vibration ? '1' : '0';
-            const aq = $('opt-autoquality'); if (aq) aq.value = s.autoQuality ? '1' : '0';
-            const sf = $('opt-showfps'); if (sf) sf.value = s.showFps ? '1' : '0';
-
-            const cam = $('opt-camsmooth'); if (cam) cam.value = String(Math.round(s.cameraSmooth * 100));
-            const look = $('opt-lookahead'); if (look) look.value = String(Math.round(s.lookAhead * 100));
-            const pi = $('opt-placeinterval'); if (pi) pi.value = String(Math.round(s.placeIntervalMs));
-
-            const joy = $('opt-joy'); if (joy) joy.value = String(s.joystickSize);
-            const btn = $('opt-btn'); if (btn) btn.value = String(s.buttonSize);
-            const sfx = $('opt-sfx'); if (sfx) sfx.value = String(Math.round(s.sfxVolume * 100));
-            const rm = $('opt-reduce-motion'); if (rm) rm.value = s.reducedMotion ? '1' : '0';
-
-            // 更新数值标签（打开设置时立即同步）
-            const setVal = (id, text) => { const el = $(id); if (el) el.textContent = text; };
-            if (joy) setVal('val-joy', joy.value + 'px');
-            if (btn) setVal('val-btn', btn.value + 'px');
-            if (sfx) setVal('val-sfx', sfx.value + '%');
-            if (cam) setVal('val-camsmooth', (Number(cam.value) / 100).toFixed(2));
-            if (look) setVal('val-lookahead', (Number(look.value) / 100).toFixed(2) + 'x');
-            if (pi) setVal('val-placeinterval', pi.value + 'ms');
-        }
-
-        function readSettingsControls(current) {
-            const base = GameSettings.sanitize(current);
-            const $ = (id) => document.getElementById(id);
-            const num = (el, fallback) => el ? parseFloat(el.value) : fallback;
-
-            return Object.assign({}, base, {
-                dprCap: num($('opt-dpr'), base.dprCap),
-                particles: ($('opt-particles') ? $('opt-particles').value === '1' : base.particles),
-                ambient: ($('opt-ambient') ? $('opt-ambient').value === '1' : base.ambient),
-                minimap: ($('opt-minimap') ? $('opt-minimap').value === '1' : base.minimap),
-                bgMountains: ($('opt-bgmountains') ? $('opt-bgmountains').value === '1' : base.bgMountains),
-
-                postFxMode: num($('opt-postfx'), base.postFxMode),
-
-                aimAssist: ($('opt-aimassist') ? $('opt-aimassist').value === '1' : base.aimAssist),
-                vibration: ($('opt-vibration') ? $('opt-vibration').value === '1' : base.vibration),
-                autoQuality: ($('opt-autoquality') ? $('opt-autoquality').value === '1' : base.autoQuality),
-                showFps: ($('opt-showfps') ? $('opt-showfps').value === '1' : base.showFps),
-
-                cameraSmooth: num($('opt-camsmooth'), base.cameraSmooth * 100) / 100,
-                lookAhead: num($('opt-lookahead'), base.lookAhead * 100) / 100,
-                placeIntervalMs: num($('opt-placeinterval'), base.placeIntervalMs),
-
-                joystickSize: num($('opt-joy'), base.joystickSize),
-                buttonSize: num($('opt-btn'), base.buttonSize),
-                sfxVolume: num($('opt-sfx'), base.sfxVolume * 100) / 100,
-                reducedMotion: ($('opt-reduce-motion') ? $('opt-reduce-motion').value === '1' : base.reducedMotion),
-            });
-        }
-
-        // ───────────────────────── Exports ─────────────────────────
-        window.TU = window.TU || {};
-        Object.assign(window.TU, { applyInfoHintText, wireUXUI, syncSettingsControls, readSettingsControls });
-
-    </script>
-
-    <!-- ========================= SECTION: Constants & Utilities ========================= -->
-
-    <!-- ========================= MODULE: core/game_constants ========================= -->
-    <script>
+<script>
         // ═══════════════════════════════════════════════════════════════════════════════
         //                                  配置常量
         // ═══════════════════════════════════════════════════════════════════════════════
@@ -5738,11 +4785,7 @@ window.PERF_MONITOR = {
         Object.assign(window.TU, { CONFIG, BLOCK, BLOCK_DATA, BLOCK_SOLID, BLOCK_LIQUID, BLOCK_TRANSPARENT, BLOCK_WALKABLE, BLOCK_MAX_ID, BLOCK_COLOR_PACKED, SUN_DECAY });
 
     </script>
-
-    <!-- ========================= SECTION: World Generation ========================= -->
-
-    <!-- ========================= MODULE: world/noise ========================= -->
-    <script>
+<script>
         // ═══════════════════════════════════════════════════════════════════════════════
         //                                 噪声生成器
         // ═══════════════════════════════════════════════════════════════════════════════
@@ -5806,11 +4849,7 @@ window.PERF_MONITOR = {
         Object.assign(window.TU, { NoiseGenerator });
 
     </script>
-
-    <!-- ========================= SECTION: Rendering ========================= -->
-
-    <!-- ========================= MODULE: render/texture_generator ========================= -->
-    <script>
+<script>
         // ═══════════════════════════════════════════════════════════════════════════════
         //                                纹理生成器 (像素艺术大师版)
         // ═══════════════════════════════════════════════════════════════════════════════
@@ -6430,9 +5469,7 @@ window.PERF_MONITOR = {
         Object.assign(window.TU, { TextureGenerator });
 
     </script>
-
-    <!-- ========================= MODULE: render/structures_json ========================= -->
-    <script id="tu-structures-json" type="application/json">
+    
 [
   {
     "id": "dungeon_room_basic",
@@ -6512,12 +5549,9 @@ window.PERF_MONITOR = {
     }
   }
 ]
-</script>
 
-    <!-- ========================= SECTION: World Generation ========================= -->
-
-    <!-- ========================= MODULE: world/world_generator ========================= -->
-    <script>
+<script>
+    
         // ═══════════════════════════════════════════════════════════════════════════════
         //                                世界生成器 (超级增强版)
         // ═══════════════════════════════════════════════════════════════════════════════
@@ -8744,14 +7778,7 @@ window.PERF_MONITOR = {
         Object.assign(window.TU, { WorldGenerator });
 
     </script>
-
-    <!-- ========================= SECTION: Effects & Simulation ========================= -->
-
-    <!-- ========================= MODULE: fx/particle_system ========================= -->
-    <script>
-        // ═══════════════════════════════════════════════════════════════════════════════
-        //                                    粒子系统 (美化版)
-        // ═══════════════════════════════════════════════════════════════════════════════
+<script>
         class ParticleSystem {
             constructor(max = 400) {
                 this.particles = [];
@@ -8863,12 +7890,7 @@ window.PERF_MONITOR = {
         Object.assign(window.TU, { ParticleSystem });
 
     </script>
-
-    <!-- ========================= SECTION: Entities ========================= -->
-
-    <!-- ========================= MODULE: entities/dropped_items ========================= -->
-    <script>
-        // ═══════════════════════════════════════════════════════════════════════════════
+<script>
         class DroppedItem {
             constructor(x, y, blockId, count = 1) {
                 this.x = x;
@@ -9258,12 +8280,7 @@ window.PERF_MONITOR = {
         Object.assign(window.TU, { DroppedItem, DroppedItemManager });
 
     </script>
-
-    <!-- ========================= SECTION: Effects & Simulation ========================= -->
-
-    <!-- ========================= MODULE: fx/ambient_particles ========================= -->
-    <script>
-        // ═══════════════════════════════════════════════════════════════════════════════
+<script>
         class AmbientParticles {
             constructor(containerId) {
                 this.container = document.getElementById(containerId);
@@ -9421,12 +8438,7 @@ window.PERF_MONITOR = {
         Object.assign(window.TU, { AmbientParticles });
 
     </script>
-
-    <!-- ========================= SECTION: Entities ========================= -->
-
-    <!-- ========================= MODULE: entities/player ========================= -->
-    <script>
-        // ═══════════════════════════════════════════════════════════════════════════════
+<script>
         class Player {
             constructor(x, y) {
                 this.x = x; this.y = y;
@@ -9882,12 +8894,7 @@ window.PERF_MONITOR = {
         Object.assign(window.TU, { Player });
 
     </script>
-
-    <!-- ========================= SECTION: Input ========================= -->
-
-    <!-- ========================= MODULE: input/touch_controller ========================= -->
-    <script>
-        // ═══════════════════════════════════════════════════════════════════════════════
+<script>
         class TouchController {
             constructor(game) {
                 this.game = game;
@@ -10071,11 +9078,8 @@ window.PERF_MONITOR = {
         Object.assign(window.TU, { TouchController });
 
     </script>
-
-    <!-- ========================= SECTION: Rendering ========================= -->
-
-    <!-- ========================= MODULE: render/renderer ========================= -->
-    <script>
+<script>
+    
         // ═══════════════════════════════════════════════════════════════════════
         const WALL_COLORS = ['#2b2f3a', '#353b48', '#2d3436', '#1e272e'];
         const PARALLAX_LAYERS = [
@@ -11153,12 +10157,7 @@ window.PERF_MONITOR = {
         Object.assign(window.TU, { Renderer });
 
     </script>
-
-    <!-- ========================= SECTION: Core Systems ========================= -->
-
-    <!-- ========================= MODULE: systems/crafting ========================= -->
-    <script>
-        // ═══════════════════════════════════════════════════════════════════════════════
+<script>
         class CraftingSystem {
             constructor(game) {
                 this.game = game;
@@ -11334,9 +10333,8 @@ window.PERF_MONITOR = {
         Object.assign(window.TU, { CraftingSystem });
 
     </script>
-
-    <!-- ========================= MODULE: systems/ui_flush ========================= -->
-    <script>
+<script>
+    
         (() => {
             'use strict';
             const TU = (window.TU = window.TU || {});
@@ -11389,9 +10387,8 @@ window.PERF_MONITOR = {
             TU.UIFlushScheduler = UIFlushScheduler;
         })();
     </script>
-
-    <!-- ========================= MODULE: systems/quality_manager ========================= -->
-    <script>
+<script>
+    
         (() => {
             'use strict';
             const TU = (window.TU = window.TU || {});
@@ -11722,12 +10719,7 @@ window.PERF_MONITOR = {
             TU.QualityManager = QualityManager;
         })();
     </script>
-
-    <!-- ========================= SECTION: UI ========================= -->
-
-    <!-- ========================= MODULE: ui/ui_manager ========================= -->
-    <script>
-        // ═══════════════════════════════════════════════════════════════════════════════
+<script>
         class UIManager {
             constructor(player, textures, uiFlush) {
                 this.uiFlush = uiFlush || null;
@@ -12218,10 +11210,7 @@ window.PERF_MONITOR = {
         Object.assign(window.TU, { UIManager });
 
     </script>
-
-    <!-- ========================= MODULE: ui/minimap ========================= -->
-    <script>
-        // ═══════════════════════════════════════════════════════════════════════════════
+<script>
         class Minimap {
             constructor(world) {
                 this.canvas = document.getElementById('minimap-canvas');
@@ -12337,9 +11326,8 @@ window.PERF_MONITOR = {
         Object.assign(window.TU, { Minimap });
 
     </script>
-
-    <!-- ========================= MODULE: ui/minimap_toggle ========================= -->
-    <script>
+<script>
+    
         (() => {
             const minimapEl = document.getElementById('minimap');
             if (!minimapEl) return;
@@ -12428,9 +11416,7 @@ window.PERF_MONITOR = {
             });
         })();
     </script>
-
-    <!-- ========================= MODULE: ui/inventory_ui ========================= -->
-    <script>
+<script>
         class InventoryUI {
             /** @param {Game} game */
             constructor(game) {
@@ -13212,19 +12198,7 @@ window.PERF_MONITOR = {
         Object.assign(window.TU, { InventoryUI });
 
     </script>
-
-    <!-- ========================= SECTION: Input ========================= -->
-
-    <!-- ========================= MODULE: input/input_manager ========================= -->
-    <script>
-        // ═══════════════════════════════════════════════════════════════════════════════
-
-        /**
-         * InputManager
-         * - 负责键盘/鼠标/触控/全屏事件的绑定
-         * - 目标：把“输入/事件监听”从 Game 本体剥离出来，降低耦合
-         * - ⚠️ 行为保持与旧版 Game._bindEvents 完全一致（代码搬迁 + this→game 重定向）
-         */
+<script>
         class InputManager {
             /** @param {Game} game */
             constructor(game) {
@@ -13492,12 +12466,7 @@ window.PERF_MONITOR = {
         Object.assign(window.TU, { InputManager });
 
     </script>
-
-    <!-- ========================= SECTION: Core Systems ========================= -->
-
-    <!-- ========================= MODULE: systems/inventory ========================= -->
-    <script>
-
+<script>
         class InventorySystem {
             /** @param {Game} game */
             constructor(game) {
@@ -13585,12 +12554,7 @@ window.PERF_MONITOR = {
         Object.assign(window.TU, { InventorySystem });
 
     </script>
-
-    <!-- ========================= SECTION: Game State & Loop ========================= -->
-
-    <!-- ========================= MODULE: game/game ========================= -->
-    <script>
-
+<script>
         class Game {
             constructor() {
                 this.canvas = document.getElementById('game');
@@ -14580,12 +13544,7 @@ window.PERF_MONITOR = {
         Object.assign(window.TU, { Game });
 
     </script>
-
-
-                            <!-- ========================= SECTION: Patches & Consolidation Layer ========================= -->
-
-                            <!-- ========================= PATCH: experience_optimized_v2 ========================= -->
-                            <script>
+<script>
                                 (() => {
                                     const TU = window.TU || {};
                                     (function () {
@@ -15339,9 +14298,7 @@ window.PERF_MONITOR = {
                                     })();
                                 })();
                             </script>
-
-                            <!-- ========================= MODULE: weather_inventory_enhanced ========================= -->
-                            <script>
+<script>
                                 (() => {
                                     'use strict';
                                     const TU = window.TU || {};
@@ -15742,9 +14699,7 @@ window.PERF_MONITOR = {
                                 }
 )();
 </script>
-
-                            <!-- ========================= PATCH: batching_idb_pickup_safe_v2 ========================= -->
-                            <script>
+<script>
                                 (() => {
                                     const TU = window.TU || {};
                                     (function () {
@@ -16644,9 +15599,7 @@ window.PERF_MONITOR = {
                                     })();
                                 })();
                             </script>
-
-                            <!-- ========================= PATCH: patch/script_35 ========================= -->
-                            <script>
+<script>
                                 /* =====================================================================
                                    v12: TileLogic Refactor (UpdateTick observer pattern) + Fluids + Logic
                                    - Water "pressure-ish" flow (down + side equalization)
@@ -17862,9 +16815,7 @@ function scheduleLogic(i) {
 
                                 })();
                             </script>
-
-                            <!-- ========================= PATCH: weather_lighting_audio_sync_v1 ========================= -->
-                            <script>
+<script>
                                 (() => {
                                     const TU = window.TU || {};
                                     (function () {
@@ -18167,9 +17118,7 @@ function scheduleLogic(i) {
                                     })();
                                 })();
                             </script>
-
-                            <!-- ========================= PATCH: weather_canvas_fx_perf_v1 ========================= -->
-                            <script>
+<script>
                                 (() => {
                                     const TU = window.TU || {};
                                     (function () {
@@ -18893,9 +17842,7 @@ function scheduleLogic(i) {
                                     })();
                                 })();
                             </script>
-
-                            <!-- ========================= PATCH: tu_experience_optimizations_v3 ========================= -->
-                            <script>
+<script>
                                 (() => {
                                     const TU = window.TU || {};
                                     (function () {
@@ -19084,9 +18031,7 @@ function scheduleLogic(i) {
                                     })();
                                 })();
                             </script>
-
-                            <!-- ========================= PATCH: v9_biomes_mines_dynamic_water_pumps_clouds_reverb ========================= -->
-                            <script>
+<script>
                                 (() => {
                                     const TU = window.TU || {};
                                     (function () {
@@ -20954,9 +19899,7 @@ function scheduleLogic(i) {
                                     })();
                                 })();
                             </script>
-
-                            <!-- ========================= PATCH: patch/script_40 ========================= -->
-                            <script>
+<script>
                                 (() => {
                                     const TU = window.TU || {};
                                     const IDS = TU.LOGIC_BLOCKS || {};
@@ -20977,9 +19920,7 @@ function scheduleLogic(i) {
                                     };
                                 })();
                             </script>
-
-                            <!-- ========================= PATCH: tu_weather_rain_visible_fix_v1 ========================= -->
-                            <script>
+<script>
                                 (() => {
                                     const TU = window.TU || {};
                                     (function () {
@@ -21304,9 +20245,7 @@ function scheduleLogic(i) {
                                     })();
                                 })();
                             </script>
-
-                            <!-- ========================= PATCH: tu_acid_rain_hazard_v1 ========================= -->
-                            <script>
+<script>
                                 (() => {
                                     const TU = window.TU || {};
                                     (function () {
@@ -21878,9 +20817,7 @@ function scheduleLogic(i) {
                                     })();
                                 })();
                             </script>
-
-                            <!-- ========================= PATCH: tu_world_worker_patch_v1 ========================= -->
-                            <script>
+<script>
                                 (() => {
                                     const TU = window.TU || {};
                                     (function () {
@@ -22854,11 +21791,7 @@ function scheduleLogic(i) {
                                     })();
                                 })();
                             </script>
-
-
-
-                            <!-- ========================= PATCH: global error guards (stability) ========================= -->
-                            <script>
+<script>
                                 (() => {
                                     // 防止 toast 无限刷屏
                                     let lastAt = 0;
@@ -22893,9 +21826,7 @@ function scheduleLogic(i) {
                                     });
                                 })();
                             </script>
-
-                            <!-- ========================= PATCH: tu_perf_pack_v1 ========================= -->
-                            <script>
+<script>
                                 (() => {
                                     'use strict';
                                     const TU = window.TU = window.TU || {};
@@ -23544,9 +22475,7 @@ function scheduleLogic(i) {
 
                                 })();
                             </script>
-
-                            <!-- ========================= PATCH: glow_bake_alpha_mask_tilelogic_pack ========================= -->
-                            <script>
+<script>
                                 (() => {
                                     'use strict';
 
@@ -24198,9 +23127,7 @@ function scheduleLogic(i) {
 
                                 })();
                             </script>
-
-                            <!-- ========================= PATCH: tu_gc_opt_v1 ========================= -->
-                            <script>
+<script>
                                 (() => {
                                     'use strict';
 
@@ -24518,303 +23445,62 @@ function scheduleLogic(i) {
                                 })();
                             </script>
 
-                            <!-- ========================= SECTION: Bootstrap ========================= -->
-
-                            <!-- ========================= MODULE: game/main_boot ========================= -->
-                            <script>
-                                window.addEventListener('load', () => {
-                                    const SAFE = window.TU_SAFE || {};
-                                    const report = (err, ctx) => {
-                                        try {
-                                            if (SAFE && typeof SAFE.reportError === 'function') SAFE.reportError(err, ctx);
-                                            else console.error(err);
-                                        } catch (e) {
-                                            try { console.error(err); } catch { }
-                                        }
-                                    };
-
-                                    try {
-                                        // Ensure optional turbo hooks are installed before boot (idempotent)
-                                        try { if (window.__TU_APPLY_TURBO_PATCHES__) window.__TU_APPLY_TURBO_PATCHES__(); } catch (e) { try { console.warn('[Boot] Turbo patches failed', e); } catch (_) { } }
-
-                                        const game = new Game();
-                                        // 暴露实例：便于调试，也便于错误兜底层在异常时停帧/暂停
-                                        window.__GAME_INSTANCE__ = game;
-                                        window.game = game; // 兼容旧的 window.game 引用（错误兜底/健康检查/调试）
-
-
-                                        const p = game.init();
-                                        if (p && typeof p.catch === 'function') {
-                                            p.catch((e) => report(e, { phase: 'init' }));
-                                        }
-                                    } catch (e) {
-                                        report(e, { phase: 'boot' });
-                                    }
-                                });
-                            </script>
-
-                            <script>
-                                /**
-                                 * Terraria Ultra - Final Optimization Patch v3 (Manus Edition)
-                                 * Focus: Rendering Batching, Zero-Allocation Input, and Worker Throughput.
-                                 */
-                                (function () {
-                                    'use strict';
-
-                                    // 1. Zero-Allocation Input Buffer
-                                    const inputBuffer = {
-                                        left: false, right: false, jump: false, sprint: false,
-                                        mouseX: 0, mouseY: 0, mouseLeft: false, mouseRight: false
-                                    };
-
-                                    if (typeof TouchController !== 'undefined') {
-                                        const originalGetInput = TouchController.prototype.getInput;
-                                        TouchController.prototype.getInput = function () {
-                                            // Re-use internal buffer instead of creating new objects
-                                            const o = this._input || (this._input = {});
-                                            o.left = this.joystick.dx < -0.3;
-                                            o.right = this.joystick.dx > 0.3;
-                                            o.jump = this.buttons.jump;
-                                            o.sprint = Math.abs(this.joystick.dx) > 0.85;
-                                            o.mine = this.buttons.mine;
-                                            o.place = this.buttons.place;
-                                            o.targetX = this.crosshair.x;
-                                            o.targetY = this.crosshair.y;
-                                            o.hasTarget = this.crosshair.visible;
-                                            return o;
-                                        };
-                                    }
-
-                                    // 2. Rendering Batching & Context Optimization
-                                    if (typeof Renderer !== 'undefined') {
-                                        const RP = Renderer.prototype;
-
-                                        // Optimize drawImage calls by checking visibility
-                                        const originalDrawTile = RP.drawTile;
-                                        if (originalDrawTile) {
-                                            RP.drawTile = function (ctx, id, x, y, size, light) {
-                                                if (light <= 0.05) return; // Skip near-black tiles
-                                                originalDrawTile.call(this, ctx, id, x, y, size, light);
-                                            };
-                                        }
-
-                                        // Cache common context states
-                                        RP._applyGlobalState = function (ctx) {
-                                            ctx.imageSmoothingEnabled = false;
-                                            ctx.textBaseline = 'top';
-                                        };
-                                    }
-
-                                    // 3. Logic Engine Worker Throughput
-                                    if (typeof TileLogicEngine !== 'undefined') {
-                                        // Optimize the applyPending logic to handle larger batches
-                                        const originalApply = TileLogicEngine.prototype._applyPending;
-                                        if (originalApply) {
-                                            TileLogicEngine.prototype._applyPending = function (deadline) {
-                                                // Increase budget for high-end devices
-                                                const isHigh = this.game && this.game._perf && this.game._perf.level === 'high';
-                                                const maxOps = isHigh ? 5000 : 2000;
-                                                // ... implementation logic would go here, but we inject via prototype
-                                                return originalApply.call(this, deadline);
-                                            };
-                                        }
-                                    }
-
-                                    // 4. Global Performance Monitor & Auto-Scaling
-                                    window.addEventListener('load', () => {
-                                        if (window.__GAME_INSTANCE__) {
-                                            const game = window.__GAME_INSTANCE__;
-                                            console.log('Manus Optimization Patch Active');
-
-                                            // Inject a smarter FPS regulator
-                                            const originalLoop = game.loop;
-                                            game.loop = function (timestamp) {
-                                                // Adaptive step based on load
-                                                if (this.fps < 30) {
-                                                    this._maxSubSteps = 2; // Reduce logic catch-up to prevent spiral
-                                                } else {
-                                                    this._maxSubSteps = 5;
-                                                }
-                                                originalLoop.call(this, timestamp);
-                                            };
-                                        }
-                                    });
-                                })();
-
-
-                                </script>
 <script>
-(function () {
-  'use strict';
-
-  if (!window.TU || !window.TU.Game || !window.TU.Game.prototype) return;
-
-  const proto = window.TU.Game.prototype;
-  if (proto.__TU_FINAL_SPREADLIGHT_PATCHED__) return;
-
-  const _orig = proto._spreadLight;
-
-  proto._spreadLight = function (sx, sy, level) {
+// ═══════════════════════════════════════════════════════════════════════
+// Bootstrap - Single clean init flow
+// ═══════════════════════════════════════════════════════════════════════
+window.addEventListener('load', () => {
     try {
-      const world = this.world;
-      if (!world || !world.tiles || !world.light) {
-        if (typeof _orig === 'function') return _orig.call(this, sx, sy, level);
-        return;
-      }
-
-      const w = world.w | 0;
-      const h = world.h | 0;
-      if (w <= 0 || h <= 0) {
-        if (typeof _orig === 'function') return _orig.call(this, sx, sy, level);
-        return;
-      }
-
-      const tiles = world.tiles;
-      const light = world.light;
-
-      // SOLID lookup table（优先使用 TU.BLOCK_SOLID）
-      const SOLID = (window.TU && window.TU.BLOCK_SOLID) || window.BLOCK_SOLID;
-      const solidArr = (SOLID && typeof SOLID.length === 'number') ? SOLID : null;
-      if (!solidArr) {
-        if (typeof _orig === 'function') return _orig.call(this, sx, sy, level);
-        return;
-      }
-
-      // 访问标记数组（避免 Set 分配）
-      const size = w * h;
-      if (!this._lightVisited || this._lightVisited.length !== size) {
-        this._lightVisited = new Uint32Array(size);
-        this._lightVisitMark = 1;
-      }
-      let mark = (++this._lightVisitMark) >>> 0;
-      if (mark === 0) {
-        this._lightVisited.fill(0);
-        mark = 1;
-        this._lightVisitMark = 1;
-      }
-      const visited = this._lightVisited;
-
-      const qx = this._lightQx || (this._lightQx = []);
-      const qy = this._lightQy || (this._lightQy = []);
-      const ql = this._lightQl || (this._lightQl = []);
-      qx.length = 0; qy.length = 0; ql.length = 0;
-
-      sx = sx | 0;
-      sy = sy | 0;
-      level = level | 0;
-      if (level <= 0) return;
-
-      qx.push(sx); qy.push(sy); ql.push(level);
-
-      let head = 0;
-      while (head < qx.length) {
-        const x = qx[head] | 0;
-        const y = qy[head] | 0;
-        const l = ql[head] | 0;
-        head++;
-
-        if (l <= 0 || x < 0 || x >= w || y < 0 || y >= h) continue;
-
-        const idx = x + y * w;
-        if (visited[idx] === mark) continue;
-        visited[idx] = mark;
-
-        const colL = light[x];
-        if (!colL) continue;
-        if (l > colL[y]) colL[y] = l;
-
-        const colT = tiles[x];
-        if (!colT) continue;
-        const id = colT[y] | 0;
-
-        const nl = l - (solidArr[id] ? 2 : 1);
-        if (nl > 0) {
-          qx.push(x - 1, x + 1, x, x);
-          qy.push(y, y, y - 1, y + 1);
-          ql.push(nl, nl, nl, nl);
+        const game = new Game();
+        window.__GAME_INSTANCE__ = game;
+        window.game = game;
+        const p = game.init();
+        if (p && typeof p.catch === 'function') {
+            p.catch((e) => { console.error('[Boot] Init failed:', e); });
         }
-
-        // Hard cap: prevent runaway queue growth
-        if (qx.length > 12000) break;
-      }
     } catch (e) {
-      try { if (typeof _orig === 'function') return _orig.call(this, sx, sy, level); } catch (_) {}
+        console.error('[Boot] Failed:', e);
     }
-  };
-
-  proto.__TU_FINAL_SPREADLIGHT_PATCHED__ = true;
-  console.log('🛠️ Final SpreadLight Patch Applied (safe)');
-})();
+});
 </script>
 
-<!-- ========================= 统一清理与健康检查 ========================= -->
 <script>
+// ═══════════════════════════════════════════════════════════════════════
+// Cleanup & Health Check
+// ═══════════════════════════════════════════════════════════════════════
 (function() {
     'use strict';
-
-    // 页面卸载时清理资源
+    
     window.addEventListener('beforeunload', function() {
-        // 清理所有Worker
         if (window.TU && TU._worldWorkerClient && TU._worldWorkerClient.worker) {
-            try { TU._worldWorkerClient.worker.terminate(); } catch (e) {}
+            try { TU._worldWorkerClient.worker.terminate(); } catch {}
         }
-        // 清理ImageBitmap
-        if (window.TU && TU._worldWorkerClient && TU._worldWorkerClient._lastBitmap) {
-            try { TU._worldWorkerClient._lastBitmap.close(); } catch (e) {}
-        }
-        // 清理资源管理器
         if (window.TU_Defensive && window.TU_Defensive.ResourceManager) {
-            try { window.TU_Defensive.ResourceManager.disposeAll(); } catch (e) {}
+            try { window.TU_Defensive.ResourceManager.disposeAll(); } catch {}
         }
     });
 
-    // 单一健康检查定时器 (每30秒)
     setInterval(function() {
-        // 检查Worker健康状态
-        if (window.TU && TU._worldWorkerClient) {
-            const client = TU._worldWorkerClient;
-            if (client._frameTimeouts > 10) {
-                console.error('[HealthCheck] Too many frame timeouts, resetting worker');
-                try {
-                    if (client.worker) client.worker.terminate();
-                    client.worker = null;
-                    client._initSent = false;
-                    client._frameTimeouts = 0;
-                    client._frameInFlight = false;
-                } catch (e) {}
+        const game = window.__GAME_INSTANCE__;
+        if (!game) return;
+        if (game.player && game.world) {
+            const { x, y } = game.player;
+            if (typeof x !== 'number' || typeof y !== 'number' || !isFinite(x) || !isFinite(y)) {
+                console.error('[HealthCheck] Invalid player position, resetting');
+                game.player.x = game.world.w * 16 / 2;
+                game.player.y = game.world.h * 16 / 2;
             }
         }
-
-        // 检查游戏状态
-        const game = window.__GAME_INSTANCE__ || window.game;
-        if (game) {
-            // 检查玩家位置有效性
-            if (game.player && game.world) {
-                const px = game.player.x;
-                const py = game.player.y;
-                if (typeof px !== 'number' || typeof py !== 'number' ||
-                    isNaN(px) || isNaN(py) || !isFinite(px) || !isFinite(py)) {
-                    console.error('[HealthCheck] Invalid player position, resetting');
-                    game.player.x = game.world.w * 16 / 2;
-                    game.player.y = game.world.h * 16 / 2;
-                }
-            }
-
-            // 检查游戏循环是否冻结
-            if (game._lastFrameTime && Date.now() - game._lastFrameTime > 10000) {
-                console.error('[HealthCheck] Game loop appears frozen');
-                if (typeof game.loop === 'function' && !game._rafRunning) {
-                    game._rafRunning = true;
-                    requestAnimationFrame((ts) => game.loop(ts));
-                }
+        if (game._lastFrameTime && Date.now() - game._lastFrameTime > 10000) {
+            console.error('[HealthCheck] Game loop appears frozen');
+            if (typeof game.loop === 'function' && !game._rafRunning) {
+                game._rafRunning = true;
+                requestAnimationFrame((ts) => game.loop(ts));
             }
         }
     }, 30000);
-
-    console.log('[Cleanup] 统一清理与健康检查已注册');
 })();
 </script>
 
 </body>
-
 </html>
